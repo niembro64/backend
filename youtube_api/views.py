@@ -14,53 +14,37 @@ logger = logging.getLogger(__name__)
 
 
 def build_video_format_string(video_quality, video_format, video_codec, file_size_limit=None):
-    """Build yt-dlp format string for video downloads based on user preferences."""
-    format_parts = []
+    """Build simple yt-dlp format string for video downloads."""
     
-    # Quality selection
+    # For video downloads, we want the complete video file (with audio already included)
+    # yt-dlp will automatically handle merging when needed
+    
     if video_quality == 'best':
-        quality_filter = 'bestvideo'
+        format_string = 'best'
+    elif video_quality == 'worst':
+        format_string = 'worst'
     elif video_quality.isdigit():
-        height = video_quality
-        quality_filter = f'bestvideo[height<={height}]'
+        # Download best video at or below specified height
+        format_string = f'best[height<={video_quality}]'
     else:
-        quality_filter = 'bestvideo'
+        format_string = 'best'
     
-    # Format selection
-    if video_format != 'auto':
-        quality_filter += f'[ext={video_format}]'
+    # Add format constraint if specified
+    if video_format and video_format != 'auto':
+        format_string = f'best[ext={video_format}]'
+        if video_quality.isdigit():
+            format_string = f'best[height<={video_quality}][ext={video_format}]'
     
-    # Codec selection
-    if video_codec != 'auto':
-        codec_map = {
-            'h264': 'avc1',
-            'h265': 'hev1',
-            'vp9': 'vp09',
-            'av1': 'av01'
-        }
-        if video_codec in codec_map:
-            quality_filter += f'[vcodec^={codec_map[video_codec]}]'
-    
-    # File size limit
-    if file_size_limit:
-        quality_filter += f'[filesize<{file_size_limit}M]'
-    
-    # Build full format string
-    audio_part = f'bestaudio[ext=m4a]/bestaudio'
-    fallback = f'best[ext={video_format}]/best' if video_format != 'auto' else 'best'
-    
-    return f'{quality_filter}+{audio_part}/{fallback}'
+    # Simple fallback
+    return f'{format_string}/best'
 
 
 def build_audio_format_string(audio_quality, audio_format, file_size_limit=None):
-    """Build yt-dlp format string for audio downloads based on user preferences."""
-    format_filter = 'bestaudio'
+    """Build simple yt-dlp format string for MP3/audio downloads."""
     
-    # Add file size limit if specified
-    if file_size_limit:
-        format_filter += f'[filesize<{file_size_limit}M]'
-    
-    return f'{format_filter}/best'
+    # For audio, we just need the best audio stream
+    # The postprocessor will handle conversion to MP3 or other formats
+    return 'bestaudio/best'
 
 
 
@@ -75,12 +59,14 @@ def get_postprocessors(download_type, video_format, audio_format, audio_quality,
             'preferredcodec': audio_format,
             'preferredquality': audio_quality,
         })
-    elif download_type == 'video' and video_format in ['avi', 'mov', 'mkv']:
-        # Video format conversion if needed
-        postprocessors.append({
-            'key': 'FFmpegVideoConvertor',
-            'preferedformat': video_format,
-        })
+    elif download_type == 'video':
+        # Add format conversion for non-MP4 formats
+        # Note: MP4 and WebM are usually available directly, others need conversion
+        if video_format in ['avi', 'mov', 'mkv', 'flv']:
+            postprocessors.append({
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': video_format,
+            })
     
     # Subtitle processor
     if include_subtitles:
@@ -132,9 +118,9 @@ class YouTubeDownloadView(APIView):
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Ultra-aggressive options to bypass YouTube restrictions
                 common_opts = {
-                    'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-                    'quiet': True,
-                    'no_warnings': True,
+                    'outtmpl': os.path.join(temp_dir, 'video.%(ext)s'),  # Simple filename
+                    'quiet': False,  # Enable output for debugging
+                    'no_warnings': False,
                     
                     # Essential for bypassing 403 errors
                     'extractor_args': {
@@ -187,13 +173,17 @@ class YouTubeDownloadView(APIView):
                 # Build format string and postprocessors based on user preferences
                 if download_type == 'audio':
                     format_string = build_audio_format_string(audio_quality, audio_format, file_size_limit)
+                    logger.info(f"Generated audio format string: {format_string}")
                 else:
                     format_string = build_video_format_string(video_quality, video_format, video_codec, file_size_limit)
+                    logger.info(f"Generated video format string: {format_string}")
+                    logger.info(f"Video format parameters - quality: {video_quality}, format: {video_format}, codec: {video_codec}")
                 
                 postprocessors = get_postprocessors(
                     download_type, video_format, audio_format, audio_quality,
                     include_subtitles, include_thumbnail, include_metadata
                 )
+                logger.info(f"Generated postprocessors: {postprocessors}")
                 
                 # Build yt-dlp options
                 ydl_opts = {
@@ -233,8 +223,8 @@ class YouTubeDownloadView(APIView):
                     # Strategy 5: mweb (mobile web)
                     {**ydl_opts, 'extractor_args': {'youtube': {'player_client': ['mweb']}}},
                     
-                    # Strategy 6: Desperate fallback - no client specification
-                    {**common_opts, 'format': 'worst' if download_type == 'audio' else 'worst[ext=mp4]', 'extractor_args': {}},
+                    # Strategy 6: Simple fallback maintaining user preferences
+                    {**ydl_opts, 'format': 'best/worst', 'extractor_args': {}},
                 ]
                 
                 info = None
@@ -263,37 +253,46 @@ class YouTubeDownloadView(APIView):
                     logger.error("No files found in temp directory after download")
                     return Response({'error': 'Download failed'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                 
-                file_path = os.path.join(temp_dir, downloaded_files[0])
+                # Find the actual video/audio file (not temp files)
+                # Sort by size to get the main file (usually the largest)
+                file_sizes = [(f, os.path.getsize(os.path.join(temp_dir, f))) for f in downloaded_files]
+                file_sizes.sort(key=lambda x: x[1], reverse=True)
+                
+                # Get the largest file (most likely the actual video/audio)
+                main_file = file_sizes[0][0]
+                file_path = os.path.join(temp_dir, main_file)
+                logger.info(f"Selected file: {main_file} (size: {file_sizes[0][1]} bytes)")
                 
                 # Read the file and prepare response
                 with open(file_path, 'rb') as f:
                     file_data = f.read()
                 
-                # Frontend will handle filename generation, so we use a simple filename
-                final_filename = f"download.{audio_format if download_type == 'audio' else video_format}"
+                # Use the actual file extension from the downloaded file
+                actual_extension = os.path.splitext(main_file)[1].lstrip('.')
+                if not actual_extension:
+                    actual_extension = audio_format if download_type == 'audio' else video_format
+                    
+                final_filename = f"download.{actual_extension}"
                 
-                # Determine content type based on format
-                if download_type == 'audio':
-                    content_type_map = {
-                        'mp3': 'audio/mpeg',
-                        'm4a': 'audio/mp4',
-                        'flac': 'audio/flac',
-                        'ogg': 'audio/ogg',
-                        'wav': 'audio/wav',
-                        'opus': 'audio/opus',
-                        'aac': 'audio/aac'
-                    }
-                    content_type = content_type_map.get(audio_format, 'audio/mpeg')
-                else:
-                    content_type_map = {
-                        'mp4': 'video/mp4',
-                        'webm': 'video/webm',
-                        'mkv': 'video/x-matroska',
-                        'avi': 'video/x-msvideo',
-                        'mov': 'video/quicktime',
-                        'flv': 'video/x-flv'
-                    }
-                    content_type = content_type_map.get(video_format, 'video/mp4')
+                # Determine content type based on actual file extension
+                content_type_map = {
+                    # Video formats
+                    'mp4': 'video/mp4',
+                    'webm': 'video/webm',
+                    'mkv': 'video/x-matroska',
+                    'avi': 'video/x-msvideo',
+                    'mov': 'video/quicktime',
+                    'flv': 'video/x-flv',
+                    # Audio formats
+                    'mp3': 'audio/mpeg',
+                    'm4a': 'audio/mp4',
+                    'flac': 'audio/flac',
+                    'ogg': 'audio/ogg',
+                    'wav': 'audio/wav',
+                    'opus': 'audio/opus',
+                    'aac': 'audio/aac'
+                }
+                content_type = content_type_map.get(actual_extension, 'application/octet-stream')
                 
                 logger.info(f"Generated final filename: {final_filename}")
                 
