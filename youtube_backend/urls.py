@@ -10,6 +10,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('youtube_api.urls')),
     path('api/', include('core.urls')),
+    path('api/media/', include('media_converter.urls')),
 ]
 
 if settings.DEBUG:

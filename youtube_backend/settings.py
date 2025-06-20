@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'youtube_api',
     'core',
+    'media_converter',
 ]
 
 MIDDLEWARE = [
