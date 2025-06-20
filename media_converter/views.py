@@ -78,8 +78,16 @@ class MediaAnalyzeView(APIView):
             
         except Exception as e:
             logger.error(f"Error analyzing media: {e}")
+            
+            # Check if it's a file size issue
+            if "413" in str(e) or "too large" in str(e).lower():
+                return Response(
+                    {'error': 'File too large. Maximum size allowed is 500MB.'},
+                    status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+                )
+            
             return Response(
-                {'error': 'Failed to analyze media file'},
+                {'error': f'Failed to analyze media file: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
