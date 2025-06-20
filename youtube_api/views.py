@@ -234,9 +234,11 @@ class YouTubeDownloadView(APIView):
                     "format": format_string,
                     "postprocessors": postprocessors,
                 }
-                
+
                 # Add cookies file if it exists
-                cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+                cookies_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)), "cookies.txt"
+                )
                 if os.path.exists(cookies_path):
                     ydl_opts["cookies"] = cookies_path
                     logger.info(f"Using cookies file: {cookies_path}")
