@@ -17,9 +17,11 @@ class HeartbeatView(APIView):
     Returns system information and current timestamp.
     """
     def get(self, request):
+        current_time = timezone.now().isoformat()
         return Response({
             'status': 'healthy',
-            'timestamp': timezone.now().isoformat(),
+            'timestamp': current_time,
+            'server_time': current_time,
             'service': 'niemo.io backend',
             'version': {
                 'python': sys.version,
