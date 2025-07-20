@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'youtube_api',
     'core',
     'media_converter',
+    'foreclosure_api',
 ]
 
 MIDDLEWARE = [

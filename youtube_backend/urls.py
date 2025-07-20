@@ -11,6 +11,7 @@ urlpatterns = [
     path('api/', include('youtube_api.urls')),
     path('api/', include('core.urls')),
     path('api/media/', include('media_converter.urls')),
+    path('api/foreclosure/', include('foreclosure_api.urls')),
 ]
 
 if settings.DEBUG:
