@@ -326,6 +326,13 @@ def parse_public_auction_notice(html_content):
             )
             if second_line_match and second_line_match.group(1).strip():
                 address += ", " + second_line_match.group(1).strip()
+    
+    # Fallback address extraction if not found above
+    if not address:
+        address_regex2 = r"ADDRESS:\s*(?:<br\s*/?>\s*)*([^<]+)"
+        full_match = re.search(address_regex2, html_content, re.IGNORECASE)
+        if full_match:
+            address = full_match.group(1).strip()
 
     # Extract dollar amount
     dollar_amount_match = re.search(r"\$[0-9,]+(\.[0-9]{2})?", html_content)
@@ -339,7 +346,7 @@ def parse_public_auction_notice(html_content):
         except ValueError:
             pass
 
-    # Extract committee information
+    # Extract committee information - matching frontend parsing exactly
     committee_element = soup.find(id="ctl00_cphBody_lblCommittee")
     committee_original = committee_element.text.strip() if committee_element else ""
 
@@ -350,21 +357,18 @@ def parse_public_auction_notice(html_content):
     if committee_element:
         # Replace <br> tags with newline characters then split into lines
         committee_html = str(committee_element)
-        committee_lines = re.sub(r"<br\s*/?>", "\n", committee_html)
+        committee_lines = re.sub(r"<br\s*/?>", "\n", committee_html, flags=re.IGNORECASE)
         committee_lines = [
             line.strip() for line in committee_lines.split("\n") if line.strip()
         ]
 
+        # First line is the committee name (matching frontend logic)
         if committee_lines:
-            # First line is usually the committee name
-            committee_name = (
-                committee_lines[0]
-                .replace('<span id="ctl00_cphBody_lblCommittee">', "")
-                .replace("</span>", "")
-                .strip()
-            )
+            committee_name = committee_lines[0]
+            # Remove any span tags from the committee name
+            committee_name = re.sub(r"<[^>]+>", "", committee_name).strip()
 
-            # Look for phone and email in subsequent lines
+            # Look for phone and email in all lines
             for line in committee_lines:
                 if "PHONE:" in line.upper():
                     committee_phone = (
